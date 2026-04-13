@@ -1,0 +1,37 @@
+# stock-profit-monitor 配置文件
+# 请根据您的实际持仓信息修改以下字段
+
+stocks:
+  - symbol: AAPL         # 股票代码（美股）
+    name: 苹果            # 自定义名称（可选）
+    shares: 100          # 持仓股数
+    cost_price: 150.00   # 成本价（USD）
+
+  - symbol: TSLA         # 股票代码（美股）
+    name: 特斯拉          # 自定义名称（可选）
+    shares: 50           # 持仓股数
+    cost_price: 200.00   # 成本价（USD）
+
+  - symbol: 00700        # 股票代码（港股，腾讯控股）
+    name: 腾讯控股
+    shares: 200
+    cost_price: 320.00   # 成本价（HKD）
+
+alert:
+  # 当总盈亏百分比超过以下阈值时触发推送（正数=盈利，负数=亏损）
+  profit_threshold_pct: 5.0    # 盈利 ≥ 5% 时推送预警
+  loss_threshold_pct: -3.0     # 亏损 ≥ 3% 时推送预警
+  # 可选：按金额触发（单位与股价货币一致），设为 0 则不启用
+  profit_threshold_amount: 0
+  loss_threshold_amount: 0
+
+webhook:
+  # 填写您的机器人 Webhook 地址，不使用的渠道留空即可
+  feishu: "https://open.feishu.cn/open-apis/bot/v2/hook/YOUR_FEISHU_TOKEN"
+  wecom: ""       # 企业微信机器人 Webhook
+  dingtalk: ""    # 钉钉机器人 Webhook
+
+price_api:
+  # 行情数据来源（默认使用公开接口，可替换为您自己的 API Key）
+  provider: "yahoo_finance"   # 可选: yahoo_finance | alpha_vantage | tushare
+  api_key: ""                 # 部分数据源需要填写 API Key
