@@ -65,7 +65,7 @@
       "position": { "x": 700, "y": 360 },
       "config": {
         "script_type": "jsonata",
-        "expression": "{ 'positions': pnl_list, 'total_cost': $sum(pnl_list.cost_price * pnl_list.shares), 'total_market_value': $sum(pnl_list.current_price * pnl_list.shares), 'total_pnl_amount': $sum(pnl_list.total_pnl), 'total_pnl_pct': ($sum(pnl_list.total_pnl) / $sum(pnl_list.cost_price * pnl_list.shares)) * 100, 'daily_pnl_amount': $sum(pnl_list.daily_pnl) }"
+        "expression": "{ 'positions': pnl_list, 'total_cost': $sum(pnl_list.(cost_price * shares)), 'total_market_value': $sum(pnl_list.(current_price * shares)), 'total_pnl_amount': $sum(pnl_list.total_pnl), 'total_pnl_pct': $sum(pnl_list.(cost_price * shares)) > 0 ? ($sum(pnl_list.total_pnl) / $sum(pnl_list.(cost_price * shares))) * 100 : 0, 'daily_pnl_amount': $sum(pnl_list.daily_pnl) }"
       }
     },
     {

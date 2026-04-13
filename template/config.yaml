@@ -12,7 +12,7 @@ stocks:
     shares: 50           # 持仓股数
     cost_price: 200.00   # 成本价（USD）
 
-  - symbol: 00700        # 股票代码（港股，腾讯控股）
+  - symbol: 00700        # 股票代码（港股, 腾讯控股）
     name: 腾讯控股
     shares: 200
     cost_price: 320.00   # 成本价（HKD）
