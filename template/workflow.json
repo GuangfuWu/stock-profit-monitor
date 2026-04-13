@@ -1,0 +1,247 @@
+{
+  "id": "stock-profit-monitor-workflow",
+  "name": "股票盈亏监控与预警流程",
+  "version": "1.0.0",
+  "description": "自动获取股价、计算持仓盈亏并在超过阈值时通过 Webhook 推送预警",
+  "nodes": [
+    {
+      "id": "node_trigger",
+      "type": "trigger",
+      "label": "定时触发器",
+      "description": "工作日收盘后自动触发（可在平台调度设置中修改 Cron 表达式）",
+      "position": { "x": 100, "y": 200 },
+      "config": {
+        "cron": "0 16 * * 1-5",
+        "timezone": "America/New_York"
+      }
+    },
+    {
+      "id": "node_load_config",
+      "type": "read_file",
+      "label": "加载配置",
+      "description": "读取 config.yaml 中的持仓信息和预警阈值",
+      "position": { "x": 300, "y": 200 },
+      "config": {
+        "file_path": "config.yaml",
+        "format": "yaml"
+      }
+    },
+    {
+      "id": "node_fetch_price",
+      "type": "http_request",
+      "label": "获取实时股价",
+      "description": "通过行情 API 批量拉取各股票最新价格与昨收价",
+      "position": { "x": 500, "y": 200 },
+      "config": {
+        "method": "GET",
+        "url": "https://query1.finance.yahoo.com/v8/finance/spark",
+        "params": {
+          "symbols": "{{stocks | map('symbol') | join(',')}}",
+          "range": "1d",
+          "interval": "1d"
+        },
+        "headers": {
+          "User-Agent": "Mozilla/5.0"
+        },
+        "timeout_ms": 10000
+      }
+    },
+    {
+      "id": "node_calc_pnl",
+      "type": "transform",
+      "label": "计算持仓盈亏",
+      "description": "根据成本价、持仓数量和当前价格，计算每只股票的当日盈亏与总体盈亏",
+      "position": { "x": 700, "y": 200 },
+      "config": {
+        "script_type": "jsonata",
+        "expression": "$map(stocks, function($stock) { { 'symbol': $stock.symbol, 'name': $stock.name, 'shares': $stock.shares, 'cost_price': $stock.cost_price, 'current_price': $lookup(prices, $stock.symbol), 'prev_close': $lookup(prev_closes, $stock.symbol), 'daily_pnl': ($lookup(prices, $stock.symbol) - $lookup(prev_closes, $stock.symbol)) * $stock.shares, 'daily_pnl_pct': (($lookup(prices, $stock.symbol) - $lookup(prev_closes, $stock.symbol)) / $lookup(prev_closes, $stock.symbol)) * 100, 'total_pnl': ($lookup(prices, $stock.symbol) - $stock.cost_price) * $stock.shares, 'total_pnl_pct': (($lookup(prices, $stock.symbol) - $stock.cost_price) / $stock.cost_price) * 100 } })"
+      }
+    },
+    {
+      "id": "node_aggregate",
+      "type": "transform",
+      "label": "汇总总盈亏",
+      "description": "汇总所有持仓的总盈亏金额和百分比",
+      "position": { "x": 700, "y": 360 },
+      "config": {
+        "script_type": "jsonata",
+        "expression": "{ 'positions': pnl_list, 'total_cost': $sum(pnl_list.cost_price * pnl_list.shares), 'total_market_value': $sum(pnl_list.current_price * pnl_list.shares), 'total_pnl_amount': $sum(pnl_list.total_pnl), 'total_pnl_pct': ($sum(pnl_list.total_pnl) / $sum(pnl_list.cost_price * pnl_list.shares)) * 100, 'daily_pnl_amount': $sum(pnl_list.daily_pnl) }"
+      }
+    },
+    {
+      "id": "node_check_threshold",
+      "type": "condition",
+      "label": "判断预警阈值",
+      "description": "检查总盈亏百分比是否超过配置的触发阈值",
+      "position": { "x": 900, "y": 280 },
+      "config": {
+        "conditions": [
+          {
+            "id": "cond_profit",
+            "label": "触发盈利预警",
+            "expression": "summary.total_pnl_pct >= config.alert.profit_threshold_pct"
+          },
+          {
+            "id": "cond_loss",
+            "label": "触发亏损预警",
+            "expression": "summary.total_pnl_pct <= config.alert.loss_threshold_pct"
+          }
+        ],
+        "default_branch": "no_alert"
+      }
+    },
+    {
+      "id": "node_format_message",
+      "type": "transform",
+      "label": "格式化预警消息",
+      "description": "将盈亏数据格式化为 Webhook 消息体（支持飞书/企微/钉钉富文本）",
+      "position": { "x": 1100, "y": 200 },
+      "config": {
+        "script_type": "javascript",
+        "code": "const emoji = summary.total_pnl_pct >= 0 ? '📈' : '📉';\nconst lines = positions.map(p => `• ${p.name}(${p.symbol}): 今日 ${p.daily_pnl_pct.toFixed(2)}%  总计 ${p.total_pnl_pct.toFixed(2)}%`);\nreturn { title: `${emoji} 股票盈亏预警`, content: lines.join('\\n') + `\\n\\n总持仓盈亏: ${summary.total_pnl_pct.toFixed(2)}% (${summary.total_pnl_amount.toFixed(2)})` };"
+      }
+    },
+    {
+      "id": "node_send_feishu",
+      "type": "http_request",
+      "label": "推送飞书通知",
+      "description": "向飞书机器人 Webhook 发送 POST 请求",
+      "position": { "x": 1300, "y": 120 },
+      "config": {
+        "method": "POST",
+        "url": "{{config.webhook.feishu}}",
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "msg_type": "text",
+          "content": {
+            "text": "{{message.title}}\n{{message.content}}"
+          }
+        },
+        "skip_if_empty_url": true
+      }
+    },
+    {
+      "id": "node_send_wecom",
+      "type": "http_request",
+      "label": "推送企业微信通知",
+      "description": "向企业微信机器人 Webhook 发送 POST 请求",
+      "position": { "x": 1300, "y": 260 },
+      "config": {
+        "method": "POST",
+        "url": "{{config.webhook.wecom}}",
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "msgtype": "text",
+          "text": {
+            "content": "{{message.title}}\n{{message.content}}"
+          }
+        },
+        "skip_if_empty_url": true
+      }
+    },
+    {
+      "id": "node_send_dingtalk",
+      "type": "http_request",
+      "label": "推送钉钉通知",
+      "description": "向钉钉机器人 Webhook 发送 POST 请求",
+      "position": { "x": 1300, "y": 400 },
+      "config": {
+        "method": "POST",
+        "url": "{{config.webhook.dingtalk}}",
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "msgtype": "text",
+          "text": {
+            "content": "{{message.title}}\n{{message.content}}"
+          }
+        },
+        "skip_if_empty_url": true
+      }
+    },
+    {
+      "id": "node_no_alert",
+      "type": "logger",
+      "label": "无需预警",
+      "description": "盈亏未超过阈值，记录日志后结束",
+      "position": { "x": 1100, "y": 400 },
+      "config": {
+        "level": "info",
+        "message": "当前盈亏 {{summary.total_pnl_pct | round(2)}}%，未触发预警阈值。"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "e1",
+      "source": "node_trigger",
+      "target": "node_load_config",
+      "label": ""
+    },
+    {
+      "id": "e2",
+      "source": "node_load_config",
+      "target": "node_fetch_price",
+      "label": ""
+    },
+    {
+      "id": "e3",
+      "source": "node_fetch_price",
+      "target": "node_calc_pnl",
+      "label": ""
+    },
+    {
+      "id": "e4",
+      "source": "node_calc_pnl",
+      "target": "node_aggregate",
+      "label": ""
+    },
+    {
+      "id": "e5",
+      "source": "node_aggregate",
+      "target": "node_check_threshold",
+      "label": ""
+    },
+    {
+      "id": "e6",
+      "source": "node_check_threshold",
+      "target": "node_format_message",
+      "label": "cond_profit"
+    },
+    {
+      "id": "e7",
+      "source": "node_check_threshold",
+      "target": "node_format_message",
+      "label": "cond_loss"
+    },
+    {
+      "id": "e8",
+      "source": "node_check_threshold",
+      "target": "node_no_alert",
+      "label": "no_alert"
+    },
+    {
+      "id": "e9",
+      "source": "node_format_message",
+      "target": "node_send_feishu",
+      "label": ""
+    },
+    {
+      "id": "e10",
+      "source": "node_format_message",
+      "target": "node_send_wecom",
+      "label": ""
+    },
+    {
+      "id": "e11",
+      "source": "node_format_message",
+      "target": "node_send_dingtalk",
+      "label": ""
+    }
+  ]
+}
